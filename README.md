@@ -1,2 +1,2 @@
 # wasm
-High level assembler the compiles to web assembly.
+High level assembler that compiles to web assembly.

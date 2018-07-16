@@ -1,0 +1,32 @@
+{
+  "name": "wasm",
+  "version": "1.0.0",
+  "description": "High level assembler that compiles to web assembly",
+  "main": "index.js",
+  "bin": {
+	  "wasm": "bin/wasm.js"
+  },
+  "scripts": {
+    "build": "pegjs -o index.js wasm.pegjs",
+    "test": "node bin/wasm.js -W -O examples/main.asm"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/schraf/wasm.git"
+  },
+  "keywords": [
+    "web",
+    "assembly",
+    "assembler"
+  ],
+  "author": "Marc Schraffenberger",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/schraf/wasm/issues"
+  },
+  "homepage": "https://github.com/schraf/wasm#readme",
+  "devDependencies": {
+    "binaryen": "^48.0.0",
+    "pegjs": "^0.10.0"
+  }
+}
