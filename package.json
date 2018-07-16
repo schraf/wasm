@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "pegjs -o index.js wasm.pegjs",
-    "test": "node bin/wasm.js -W -O examples/main.asm"
+    "test": "node bin/wasm.js -W -O examples/main.asm && node examples/main.js"
   },
   "repository": {
     "type": "git",

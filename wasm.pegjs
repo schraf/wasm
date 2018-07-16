@@ -156,8 +156,11 @@ BinaryLiteral
 OctalLiteral
 	= "0" digits:$([0-7]+) { return parseInt(digits, 8); }
 
+Comment
+	= "#" [^\n\r]*
+
 __
-	= (WhiteSpace / LineTerminator)* { }
+	= (WhiteSpace / LineTerminator / Comment)* { }
 
 _
 	= (WhiteSpace)+ { }
