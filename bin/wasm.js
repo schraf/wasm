@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 let files = [];
-let args = { optimize: false, debug: false, validate: false };
+let options = { optimize: false, debug: false, validate: false };
 
 if (process.argv.length > 2) {
 	for (let i = 2; i < process.argv.length; ++i) {
@@ -12,15 +12,15 @@ if (process.argv.length > 2) {
 		if (arg[0] == '-') {
 			switch (arg) {
 				case '-O':
-					args.optimize = true;
+					options.optimize = true;
 					break;
 
 				case '-g':
-					args.debug = true;
+					options.debug = true;
 					break;
 
 				case '-W':
-					args.validate = true;
+					options.validate = true;
 					break;
 
 				default:
@@ -46,17 +46,14 @@ if (files.length == 0) {
 }
 
 for (let file of files) {
-	let parsedModule = wasm.parse(file.data);
+	options.filename = file.name;
+	let parsedModule = wasm.parse(file.data, options);
 
-	if (args.validate) {
+	if (options.validate) {
 		console.assert(parsedModule.validate());
 	}
 
-	if (args.debug) {
-		parsedModule.addDebugInfoFileName(file.name);
-	}
-
-	if (args.optimize) {
+	if (options.optimize) {
 		parsedModule.optimize();
 	}
 

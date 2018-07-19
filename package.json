@@ -4,11 +4,11 @@
   "description": "High level assembler that compiles to web assembly",
   "main": "index.js",
   "bin": {
-	  "wasm": "bin/wasm.js"
+    "wasm": "bin/wasm.js"
   },
   "scripts": {
     "build": "pegjs -o index.js wasm.pegjs",
-    "test": "node bin/wasm.js -W -O examples/main.asm && node examples/main.js"
+    "test": "node bin/wasm.js -W -O -g examples/main.asm"
   },
   "repository": {
     "type": "git",

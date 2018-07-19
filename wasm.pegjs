@@ -1,63 +1,225 @@
 {
 
-const PAGESIZE = 65536;
-const MEGABYTE = 1024 * 1024;
-const MEMSIZE  = 8 * MEGABYTE;
-const PAGES    = (MEMSIZE / PAGESIZE) | 0;
-
 const binaryen = require('binaryen');
 
-let defines = {};
-let module = new binaryen.Module();
-let ftype = module.addFunctionType('void', binaryen.none, []);
-let itype = module.addFunctionType('itype', binaryen.none, [ binaryen.i32 ]);
-let nextId = 0;
+class MemorySegment {
+	constructor(address) {
+		this.address = address;
+		this.data = [];
+		this.buffer = new ArrayBuffer(4);
+		this.i32Array = new Uint32Array(this.buffer);
+		this.f32Array = new Float32Array(this.buffer);
+	}
 
-module.addFunctionImport('interrupt', 'system', 'interrupt', itype);
-module.setMemory(PAGES, PAGES);
-module.addMemoryExport("0", "0");
+	addByte(byte) {
+		this.data.push(byte | 0);
+	}
 
-for (let i = 0; i < 32; ++i) {
-	module.addGlobal('r'+i, binaryen.i32, 1, module.i32.const(0));
+	addWord(word) {
+		this.addByte(word & 0xFF);
+		this.addByte((word >> 8) & 0xFF);
+	}
+
+	addDoubleWord(dword) {
+		this.addWord(dword & 0xFFFF);
+		this.addWord((dword >> 16) & 0xFFFF);
+	}
+
+	addFloat(float) {
+		this.f32Array[0] = float;
+		this.addDoubleWord(this.i32Array[0]);
+	}
 }
 
-function uid() { return `id${nextId++}`; }
+class Program {
+	constructor() {
+		this.defines = {};
+		this.module = new binaryen.Module();
+		this.functionTypes = {};
+		this.nextId = 1;
+		this.memoryPages = 0;
+		this.memorySegments = [];
+		this.startFunction = undefined;
+		this.functions = {};
+	}
+
+	init() {
+		this.module.addFunctionType('void', binaryen.none, []);
+
+		let interruptFuncType = this.module.addFunctionType('interrupt', binaryen.none, [ binaryen.i32 ]);
+		this.module.addFunctionImport('interrupt', 'system', 'interrupt', interruptFuncType);
+
+		this.module.addMemoryExport("0", "0");
+
+		for (let i = 0; i < 32; ++i) {
+			this.module.addGlobal('r'+i, binaryen.i32, 1, this.module.i32.const(0));
+			this.module.addGlobal('s'+i, binaryen.f32, 1, this.module.f32.const(0));
+		}
+
+		this.org(0);
+	}
+
+	addFunction(name, expr) {
+		let block = program.module.block(null, expr);
+		let ftype = program.module.getFunctionTypeBySignature(binaryen.none, []);
+		let func = program.module.addFunction(name, ftype, [], block);
+		this.functions[name] = func;
+	}
+
+	org(addr) {
+		this.memorySegments.push(new MemorySegment(addr));
+	}
+
+	getMemorySegment() {
+		return this.memorySegments[this.memorySegments.length - 1];
+	}
+
+	uid() {
+		return `id${this.nextId++}`;
+	}
+
+	finalize() {
+		let segments = [];
+
+		for (let segment of this.memorySegments) {
+			segments.push({ 
+				offset: program.module.i32.const(segment.address),
+				data: new Uint8Array(segment.data)
+			});
+		}
+
+		this.module.setMemory(this.memoryPages, this.memoryPages, null, segments);
+
+		if (this.startFunction !== undefined) {
+			let func = this.functions[this.startFunction];
+
+			if (func !== undefined) {
+				this.module.setStart(func);
+			}
+		}
+	}
+}
+
+let program = new Program();
+program.init();
+
+function loc() { return peg$computePosDetails(peg$currPos); }
 
 }
 
 Start
-	= __ ((Block / Directive) __)* { return module; }
+	= Program { program.finalize(); return program.module; }
 
-Directive
-	= ".export" _ func:Identifier __ { module.addFunctionExport(func, func); }
-	/ ".define" _ name:Identifier _ "=" _ value:NumericLiteral __ { defines[name] = value; }
+Program
+	= __ GlobalSection __ ((CodeSection / DataSection) __)*
 
-Block
-	= label:Identifier ":" __ body:Instruction+ { 
-		let block = module.block(null, body);
-		module.addFunction(label, ftype, [], block);
+/******** SECTIONS ********/
+
+GlobalSection
+	= GlobalStatement*
+
+CodeSection
+	= ".code" __ (CodeStatement __)*
+
+DataSection
+	= ".data" __ (DataStatement __)*
+
+/******** STATEMENTS ********/
+
+GlobalStatement
+	= ".export" _ func:Identifier __ { program.module.addFunctionExport(func, func); }
+	/ ".mempages" _ pages:NumericExpression __ { program.memoryPages = pages; }
+	/ ".start" _ name:Identifier __ { program.startFunction = name; }
+	/ ".define" _ name:Identifier __ "=" __ value:NumericExpression __ { program.defines[name] = value; }
+
+CodeStatement
+	= FunctionStatement
+
+DataStatement
+	= ".org" _ addr:Numeric __ { program.org(addr); }
+	/ name:Identifier ":" __ {
+		let segment = program.getMemorySegment();
+		program.defines[name] = segment.address + segment.data.length;
+	}
+	/ ".db" _ values:NumericList __ { 
+		let segment = program.getMemorySegment();
+		values.forEach(segment.addByte.bind(segment));
+	}
+	/ ".dw" _ values:NumericList __ {
+		let segment = program.getMemorySegment();
+		values.forEach(segment.addWord.bind(segment));
+	}
+	/ ".dd" _ values:NumericList __ {
+		let segment = program.getMemorySegment();
+		values.forEach(segment.addDoubleWord.bind(segment));
+	}
+	/ ".df" _ values:NumericList __ {
+		let segment = program.getMemorySegment();
+		values.forEach(segment.addFloat.bind(segment));
 	}
 
-Instruction
-	= op:Operation _ dst:lvalue _ src:rvalue __ { return module.setGlobal(dst, module.i32[op](module.getGlobal(dst, binaryen.i32), src)); }
-	/ op:LoadOperation _ dst:lvalue _ src:rvalue __ { return module.setGlobal(dst, module.i32[op](0, 0, src)); }
-	/ op:StoreOperation _ dst:rvalue _ src:rvalue __ { return module.i32[op](0, 0, dst, src); }
-	/ op:Comparison _ left:rvalue _ right:rvalue __ { return module.i32[op](left, right); }
-	/ "mov" _ dst:lvalue _ src:rvalue __ { return module.setGlobal(dst, src); }
-	/ "call" _ label:Identifier __ { return module.call(label, [], binaryen.none); }
-	/ "int" _ int:rvalue __ { return module.call_import('interrupt', [ int ], binaryen.none); }
-	/ "eqz" _ src:rvalue __ { return module.i32.eqz(src); }
-	/ "nop" __ { return module.nop(); }
-	/ "ret" __ { return module.return(); }
-	/ "brk" __ { return module.unreachable(); }
-	/ "if" __ cond:Instruction+ __ "then" __ body:Instruction+ ("else" __ body2:Instruction+)? "end" __ { return module.if(module.block(null, cond, binaryen.i32), module.block(null, body)); }
-	/ "do" __ body:Instruction+ __ "while" __ cond:Instruction+ "end" __ { 
-		const id = uid();
-		body.push(module.break(id, cond));
-		return module.loop(id, module.block(null, body)); 
+FunctionStatement
+	= name:Identifier ":" __ body:FunctionBodyStatement+ { program.addFunction(name, body); }
+
+FunctionBodyStatement
+	= IntegerCodeStatement
+	/ FloatCodeStatement
+	/ "call" _ label:Identifier __ { return program.module.call(label, [], binaryen.none); }
+	/ "int" _ int:IntegerRightValue __ { return program.module.call_import('interrupt', [ int ], binaryen.none); }
+	/ "nop" __ { return program.module.nop(); }
+	/ "ret" __ { return program.module.return(); }
+	/ "brk" __ { return program.module.unreachable(); }
+	/ "if" __ cond:ComparisonExpression __ "then" __ trueBody:FunctionBodyStatement+ ("else" __ falseBody:FunctionBodyStatement+)? "end" __ { 
+		return program.module.if(program.module.block(null, [cond], binaryen.auto), program.module.block(null, trueBody)); 
+	}
+	/ "do" __ body:FunctionBodyStatement+ __ "while" __ cond:ComparisonExpression "end" __ { 
+		const id = program.uid();
+		body.push(program.module.break(id, [cond]));
+		return program.module.loop(id, program.module.block(null, body)); 
 	}
 
-Operation
+ComparisonExpression
+	= inst:IntegerComparisonInstruction _ left:IntegerRightValue _ right:IntegerRightValue __ { return program.module.i32[inst](left, right); }
+	/ inst:FloatComparisonInstruction _ left:FloatRightValue _ right:FloatRightValue __ { return program.module.f32[inst](left, right); }
+
+IntegerCodeStatement
+	= inst:IntegerUnaryInstruction _ arg:IntegerRightValue __ { return program.module.i32[inst](arg); }
+	/ inst:IntegerBinaryInstruction _ left:IntegerLeftValue _ right:IntegerRightValue __ { return program.module.setGlobal(left, program.module.i32[inst](program.module.getGlobal(left, binaryen.i32), right)); }
+	/ inst:IntegerLoadInstruction _ left:IntegerLeftValue _ right:IntegerRightValue __ { return program.module.setGlobal(left, program.module.i32[inst](0, 0, right)); }
+	/ inst:IntegerStoreInstruction _ left:IntegerRightValue _ right:IntegerRightValue __ { return program.module.i32[inst](0, 0, left, right); }
+	/ "mov" _ left:IntegerLeftValue _ right:IntegerRightValue __ { return program.module.setGlobal(left, right); }
+	/ "eqz" _ value:IntegerRightValue __ { return program.module.i32.eqz(value); }
+	/ "inc" _ left:IntegerLeftValue __ { return program.module.setGlobal(left, program.module.i32.add(program.module.getGlobal(left, binaryen.i32), program.module.i32.const(1))); }
+	/ "dec" _ left:IntegerLeftValue __ { return program.module.setGlobal(left, program.module.i32.sub(program.module.getGlobal(left, binaryen.i32), program.module.i32.const(1))); }
+
+FloatCodeStatement
+	= inst:FloatUnaryInstruction _ arg:FloatRightValue __ { return program.module.f32[inst](arg); }
+	/ inst:FloatBinaryInstruction _ left:FloatLeftValue _ right:FloatRightValue __ { return program.module.setGlobal(left, program.module.f32[inst](program.module.getGlobal(left, binaryen.f32), right)); }
+	/ inst:FloatLoadInstruction _ left:FloatLeftValue _ right:IntegerRightValue __ { return program.module.setGlobal(left, program.module.f32[inst](0, 0, right)); }
+	/ inst:FloatStoreInstruction _ left:IntegerRightValue _ right:FloatRightValue __ { return program.module.f32[inst](0, 0, left, right); }
+	/ "fmov" _ left:FloatLeftValue _ right:FloatRightValue __ { return program.module.setGlobal(left, right); }
+	/ "finc" _ left:FloatLeftValue __ { return program.module.setGlobal(left, program.module.f32.add(program.module.getGlobal(left, binaryen.f32), program.module.f32.const(1))); }
+	/ "fdec" _ left:FloatLeftValue __ { return program.module.setGlobal(left, program.module.f32.sub(program.module.getGlobal(left, binaryen.f32), program.module.f32.const(1))); }
+
+/******** LVALUES & RVALUES ********/
+
+IntegerLeftValue
+	= IntegerRegister
+
+IntegerRightValue
+	= IntegerRegisterExpression
+	/ IntegerExpression
+
+FloatLeftValue
+	= FloatRegister
+
+FloatRightValue
+	= FloatRegisterExpression
+	/ FloatExpression
+
+/******** INSTRUCTIONS ********/
+
+IntegerBinaryInstruction
 	= "add"
 	/ "sub"
 	/ "mul"
@@ -74,7 +236,11 @@ Operation
 	/ "rotl"
 	/ "rotr"
 
-Comparison
+IntegerUnaryInstruction
+	= "clz"
+	/ "clz"
+
+IntegerComparisonInstruction
 	= "eq"
 	/ "ne"
 	/ "lt_s"
@@ -86,64 +252,115 @@ Comparison
 	/ "ge_s"
 	/ "ge_u"
 
-LoadOperation
-	= "load"
-	/ "load8_s"
+FloatUnaryInstruction
+	= "neg"
+	/ "abs"
+	/ "ceil"
+	/ "floor"
+	/ "trunc"
+	/ "nearest"
+	/ "sqrt"
+
+FloatBinaryInstruction
+	= "fadd"
+	/ "fsub"
+	/ "fmul"
+	/ "fdiv"
+	/ "fmin"
+	/ "fmax"
+
+FloatComparisonInstruction
+	= "feq"
+	/ "fne"
+	/ "flt"
+	/ "fle"
+	/ "fgt"
+	/ "fge"
+
+FloatLoadInstruction
+	= "fload"
+
+FloatStoreInstruction
+	= "fstore"
+
+IntegerLoadInstruction
+	= "load8_s"
 	/ "load8_u"
 	/ "load16_s"
 	/ "load16_u"
+	/ "load"
 
-StoreOperation
-	= "store"
-	/ "store8_s"
-	/ "store8_u"
-	/ "store16_s"
-	/ "store16_u"
+IntegerStoreInstruction
+	= "store8"
+	/ "store8"
+	/ "store16"
+	/ "store16"
+	/ "store"
 
-lvalue
-	= Register
+/******** REGISTERS ********/
 
-rvalue
-	= RegisterExpression
-	/ NumericExpression
-	/ DefineExpression
+IntegerRegisterExpression
+	= reg:IntegerRegister { return program.module.getGlobal(reg, binaryen.i32); }
 
-RegisterExpression
-	= reg:Register { return module.getGlobal(reg, binaryen.i32); }
+FloatRegisterExpression
+	= reg:FloatRegister { return program.module.getGlobal(reg, binaryen.f32); }
 
-NumericExpression
-	= value:NumericLiteral { return module.i32.const(value); }
-
-DefineExpression
-	= name:Identifier { 
-		let value = defines[name];
-		if (value === undefined) {
-			error(`unknown define ${name}`); 
-		}
-		return module.i32.const(value);
-	}
-
-WhiteSpace "whitespace"
-	= [ \t]
-
-LineTerminator
-	= "\n"
-	/ "\r"
-	/ "\r\n"
-
-Identifier
-	= name:[_a-zA-Z]+ { return name.join(''); }
-
-Register
+IntegerRegister
 	= "r"i ("3"[0-1] / [1-2][0-9] / [0-9]) { return text(); }
 
-NumericLiteral "number"
+FloatRegister
+	= "s"i ("3"[0-1] / [1-2][0-9] / [0-9]) { return text(); }
+
+/******** EXPRESSIONS ********/
+
+IntegerExpression
+	= value:NumericExpression { return program.module.i32.const(value | 0); }
+
+FloatExpression
+	= value:NumericExpression { return program.module.f32.const(value); }
+
+NumericList
+	= value:NumericExpression __ "," __ list:NumericList { return [value].concat(list); }
+	/ value:NumericExpression { return [value]; }
+
+NumericExpression
+	= left:NumericSubExpression __ "+" __ right:NumericExpression { return left+right; }
+	/ left:NumericSubExpression __ "-" __ right:NumericExpression { return left-right; }
+	/ NumericSubExpression
+
+NumericSubExpression
+	= left:NumericPrimary __ "*" __ right:NumericSubExpression { return left*right; }
+	/ left:NumericPrimary __ "/" __ right:NumericSubExpression { return left/right; }
+	/ NumericPrimary
+
+NumericPrimary
+	= Numeric
+	/ "(" value:NumericExpression ")" { return value; }
+
+/******** NUMBERS ********/
+
+Numeric "numeric"
 	= HexLiteral
 	/ BinaryLiteral
 	/ OctalLiteral
-	/ DecimalLiteral
+	/ FloatLiteral
+	/ IntegerLiteral
+	/ DefineLiteral
 
-DecimalLiteral
+DefineLiteral
+	= name:Identifier {
+		let value = program.defines[name];
+		if (value === undefined) {
+			error(`unknown define ${name}`);
+		}
+		return value;
+	}
+
+FloatLiteral
+	= [+-]? [1-9] [0-9]* "." [0-9]+ { return parseFloat(text()); }
+	/ [+-]? "0." [0-9]+ { return parseFloat(text()); }
+
+IntegerLiteral
 	= "0" { return 0; }
 	/ [+-]? [1-9] [0-9]* { return parseInt(text()); }
 
@@ -155,6 +372,21 @@ BinaryLiteral
 
 OctalLiteral
 	= "0" digits:$([0-7]+) { return parseInt(digits, 8); }
+
+/******** IDENTIFIERS ********/
+
+Identifier
+	= name:[_a-zA-Z]+ { return name.join(''); }
+
+/******** WHITE SPACE AND COMMENTS ********/
+
+WhiteSpace "whitespace"
+	= [ \t]
+
+LineTerminator
+	= "\n"
+	/ "\r"
+	/ "\r\n"
 
 Comment
 	= "#" [^\n\r]*
