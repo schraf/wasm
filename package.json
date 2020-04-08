@@ -1,6 +1,6 @@
 {
   "name": "wasm",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "High level assembler that compiles to web assembly",
   "main": "index.js",
   "bin": {
@@ -8,7 +8,8 @@
   },
   "scripts": {
     "build": "pegjs -o index.js wasm.pegjs",
-    "test": "node bin/wasm.js -W -O -g examples/main.asm"
+    "test": "node bin/wasm.js -W -O -g examples/main.asm",
+    "serve": "http-server ./examples --cors -c-1 -a 127.0.0.1"
   },
   "repository": {
     "type": "git",
@@ -27,6 +28,7 @@
   "homepage": "https://github.com/schraf/wasm#readme",
   "devDependencies": {
     "binaryen": "^48.0.0",
+    "http-server": "^0.12.1",
     "pegjs": "^0.10.0"
   }
 }

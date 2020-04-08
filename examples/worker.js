@@ -33,11 +33,11 @@ class VirtualMachine {
 
 		let src = new Uint8ClampedArray(this.memory.buffer, 0x0C00, WIDTH*HEIGHT);
 		let dst = new Uint32Array(this.backBuffer);
+		let idx = 0;
 
 		for (let y = 0; y < HEIGHT; ++y) {
 			for (let x = 0; x < WIDTH; ++x) {
-				let idx = y*WIDTH+x;
-				let pixel = src[idx];
+				let pixel = src[idx++];
 				dst[idx] =(255 << 24) |
 					((((pixel >> 5) & 7) * 32) << 16) |
 					((((pixel >> 2) & 7) * 32) << 8) |

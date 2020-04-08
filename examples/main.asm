@@ -23,7 +23,8 @@ sprite:
 
 .code
 
-clear:
+void clear()
+{
 	mov r0 VIDMEM
 	mov r1 WIDTH
 	mul r1 HEIGHT
@@ -35,8 +36,10 @@ clear:
 		lt_u r0 r1 
 	end
 	ret
+}
 
-draw:
+void draw()
+{
 	mov r1 sprite
 	mov r3 VIDMEM
 	add r3 r10
@@ -51,17 +54,21 @@ draw:
 		lt_u r1 sprite+4
 	end
 	ret
+}
 
-vsync:
-	call clear
-	call draw
+void vsync()
+{
+	clear()
+	draw()
 	inc r10
 	and r10 0xFF
 	ret
+}
 
-init:
+void init()
+{
 	mov r10 0
-	call draw
-	call clear
+	draw()
+	clear()
 	ret
-
+}

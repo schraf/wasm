@@ -6,6 +6,8 @@ class MemorySegment {
 	constructor(address) {
 		this.address = address;
 		this.data = [];
+
+		// used for float conversions
 		this.buffer = new ArrayBuffer(4);
 		this.i32Array = new Uint32Array(this.buffer);
 		this.f32Array = new Float32Array(this.buffer);
@@ -31,6 +33,13 @@ class MemorySegment {
 	}
 }
 
+class Variable {
+	constructor(type, name) {
+		this.type = type;
+		this.name = name;
+	}
+}
+
 class Program {
 	constructor() {
 		this.defines = {};
@@ -44,9 +53,7 @@ class Program {
 	}
 
 	init() {
-		this.module.addFunctionType('void', binaryen.none, []);
-
-		let interruptFuncType = this.module.addFunctionType('interrupt', binaryen.none, [ binaryen.i32 ]);
+		let interruptFuncType = this.getFunctionSignature(binaryen.none, [ binaryen.i32 ]);
 		this.module.addFunctionImport('interrupt', 'system', 'interrupt', interruptFuncType);
 
 		this.module.addMemoryExport("0", "0");
@@ -59,10 +66,34 @@ class Program {
 		this.org(0);
 	}
 
-	addFunction(name, expr) {
-		let block = program.module.block(null, expr);
-		let ftype = program.module.getFunctionTypeBySignature(binaryen.none, []);
-		let func = program.module.addFunction(name, ftype, [], block);
+	getTypeSymbol(type) {
+		switch (type) {
+			case binaryen.none: return 'v';
+			case binaryen.i32:  return 'i';
+			case binaryen.f32:  return 'f';
+		}
+	}
+
+	getFunctionSignature(rettype, locals) {
+		let signature = this.module.getFunctionTypeBySignature(rettype, locals);
+
+		if (signature == 0) {
+			let signatureName = 'f_' + this.getTypeSymbol(rettype) + '_';
+
+			for (const localtype of locals) {
+				signatureName += this.getTypeSymbol(localtype);
+			}
+
+			signature = this.module.addFunctionType(signatureName, rettype, locals);
+		}
+
+		return signature;
+	}
+
+	addFunction(name, rettype, locals, expr) {
+		let block = this.module.block(null, expr);
+		let ftype = this.getFunctionSignature(rettype, locals);
+		let func = this.module.addFunction(name, ftype, [], block);
 		this.functions[name] = func;
 	}
 
@@ -83,7 +114,7 @@ class Program {
 
 		for (let segment of this.memorySegments) {
 			segments.push({ 
-				offset: program.module.i32.const(segment.address),
+				offset: this.module.i32.const(segment.address),
 				data: new Uint8Array(segment.data)
 			});
 		}
@@ -159,12 +190,17 @@ DataStatement
 	}
 
 FunctionStatement
-	= name:Identifier ":" __ body:FunctionBodyStatement+ { program.addFunction(name, body); }
+	= rettype:ReturnType _ name:Identifier "(" locals:FunctionArgumentList ")" __ "{" __ body:FunctionBodyStatement+ __ "}" { program.addFunction(name, rettype, locals, body); }
+
+FunctionArgumentList
+	= argtype:ArgumentType _ argname:Identifier __ "," __ list:FunctionArgumentList { return [new Variable(argtype, argname)].concat(list); }
+	/ argtype:ArgumentType _ argname:Identifier __ { return [new Variable(argtype, argname)]; }
+	/ __ { return []; }
 
 FunctionBodyStatement
 	= IntegerCodeStatement
 	/ FloatCodeStatement
-	/ "call" _ label:Identifier __ { return program.module.call(label, [], binaryen.none); }
+	/ label:Identifier "(" ")" __ { return program.module.call(label, [], binaryen.none); }
 	/ "int" _ int:IntegerRightValue __ { return program.module.call_import('interrupt', [ int ], binaryen.none); }
 	/ "nop" __ { return program.module.nop(); }
 	/ "ret" __ { return program.module.return(); }
@@ -372,6 +408,26 @@ BinaryLiteral
 
 OctalLiteral
 	= "0" digits:$([0-7]+) { return parseInt(digits, 8); }
+
+/******** TYPES ********/
+
+ArgumentType
+	= IntegerType
+	/ FloatType
+
+ReturnType
+	= VoidType
+	/ IntegerType
+	/ FloatType
+
+VoidType
+	= "void" { return binaryen.void; }
+
+IntegerType
+	= "i32" { return binaryen.i32; }
+
+FloatType
+	= "f32" { return binaryen.f32; }
 
 /******** IDENTIFIERS ********/
 
